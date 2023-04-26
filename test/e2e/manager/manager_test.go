@@ -15,7 +15,7 @@ import (
 
 	"k8s.io/client-go/kubernetes"
 
-	"open-cluster-management.io/addon-framework/pkg/addonmanager/constants"
+	addonapiv1alpha1 "open-cluster-management.io/api/addon/v1alpha1"
 	addonclientsetv1 "open-cluster-management.io/api/client/addon/clientset/versioned/typed/addon/v1alpha1"
 	ocmclientsetv1 "open-cluster-management.io/api/client/cluster/clientset/versioned/typed/cluster/v1beta1"
 
@@ -35,7 +35,7 @@ func TestInstallation(t *testing.T) {
 		if err != nil {
 			return false
 		}
-		return ConditionIsTrue(addon.Status.Conditions, constants.AddonManifestApplied)
+		return ConditionIsTrue(addon.Status.Conditions, addonapiv1alpha1.ManagedClusterAddOnManifestApplied)
 	}, 120*time.Second, 100*time.Millisecond, "expected ManagedClusterAddOn to have the ManifestApplied condition")
 
 	// Check that OLM is running
@@ -54,7 +54,7 @@ func TestInstallation(t *testing.T) {
 	require.NoError(t, err, "failed creating a client for OCM CRDs")
 	placement, err := ocmClient.Placements("open-cluster-management").Get(ctx, "non-openshift", metav1.GetOptions{})
 	require.NoError(t, err, "failed retrieving the placement")
-	placement.Spec.Predicates[0].RequiredClusterSelector.LabelSelector.MatchExpressions[0].Operator = metav1.LabelSelectorOpNotIn
+	placement.Spec.Predicates[0].RequiredClusterSelector.LabelSelector.MatchLabels = map[string]string{"test": "exclude"}
 	_, err = ocmClient.Placements("open-cluster-management").Update(ctx, placement, metav1.UpdateOptions{})
 	require.NoError(t, err, "failed updating the ManagedCluster resource to uninstall OLM")
 	err = addonClient.ManagedClusterAddOns("cluster1").Delete(ctx, "olm-addon", metav1.DeleteOptions{})
