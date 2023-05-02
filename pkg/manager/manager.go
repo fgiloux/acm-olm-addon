@@ -167,6 +167,7 @@ func (o *olmAgent) GetAgentAddonOptions() agentfw.AgentAddonOptions {
 		SupportedConfigGVRs: []schema.GroupVersionResource{
 			addonfactory.AddOnDeploymentConfigGVR,
 		},
+		HostedModeEnabled: true,
 	}
 }
 

@@ -10,6 +10,17 @@ metadata:
     pod-security.kubernetes.io/audit-version: latest
     pod-security.kubernetes.io/warn: restricted
     pod-security.kubernetes.io/warn-version: latest
+  annotations:
+    addon.open-cluster-management.io/hosted-manifest-location: hosting
+---
+{{- if eq .InstallMode "Hosted" }}
+# The addon will create a ServiceAccount in the olm namespace.
+# Make sure it exists on the managed cluster.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: olm
+{{- end }}
 ---
 apiVersion: v1
 kind: Namespace
@@ -22,17 +33,33 @@ metadata:
     pod-security.kubernetes.io/audit-version: latest
     pod-security.kubernetes.io/warn: restricted
     pod-security.kubernetes.io/warn-version: latest
+  annotations:
+    addon.open-cluster-management.io/hosted-manifest-location: none
 ---
 kind: ServiceAccount
 apiVersion: v1
 metadata:
   name: olm-operator-serviceaccount
   namespace: olm
+  annotations:
+    addon.open-cluster-management.io/hosted-manifest-location: hosting
+---
+{{- if eq .InstallMode "Hosted" }}
+kind: ServiceAccount
+apiVersion: v1
+metadata:
+  name: olm-operator-serviceaccount
+  namespace: olm
+  annotations:
+    addon.open-cluster-management.io/hosted-manifest-location: none
+{{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: system:controller:operator-lifecycle-manager
+  annotations:
+    addon.open-cluster-management.io/hosted-manifest-location: none
 rules:
 - apiGroups: ["*"]
   resources: ["*"]
@@ -44,6 +71,8 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
   name: olm-operator-binding-olm
+  annotations:
+    addon.open-cluster-management.io/hosted-manifest-location: none
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
@@ -57,6 +86,8 @@ apiVersion: operators.coreos.com/v1
 kind: OLMConfig
 metadata:
   name: cluster
+  annotations:
+    addon.open-cluster-management.io/hosted-manifest-location: none
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -67,6 +98,7 @@ metadata:
     app: olm-operator
   annotations:
     version: "v1.24"
+    addon.open-cluster-management.io/hosted-manifest-location: hosting
 spec:
   strategy:
     type: RollingUpdate
@@ -132,6 +164,8 @@ kind: Deployment
 metadata:
   name: catalog-operator
   namespace: olm
+  annotations:
+    addon.open-cluster-management.io/hosted-manifest-location: hosting
   labels:
     app: catalog-operator
 spec:
@@ -196,6 +230,8 @@ metadata:
   labels:
     rbac.authorization.k8s.io/aggregate-to-admin: "true"
     rbac.authorization.k8s.io/aggregate-to-edit: "true"
+  annotations:
+    addon.open-cluster-management.io/hosted-manifest-location: none
 rules:
 - apiGroups: ["operators.coreos.com"]
   resources: ["subscriptions"]
@@ -212,6 +248,8 @@ metadata:
     rbac.authorization.k8s.io/aggregate-to-admin: "true"
     rbac.authorization.k8s.io/aggregate-to-edit: "true"
     rbac.authorization.k8s.io/aggregate-to-view: "true"
+  annotations:
+    addon.open-cluster-management.io/hosted-manifest-location: none
 rules:
 - apiGroups: ["operators.coreos.com"]
   resources: ["clusterserviceversions", "catalogsources", "installplans", "subscriptions", "operatorgroups"]
@@ -225,12 +263,16 @@ kind: OperatorGroup
 metadata:
   name: global-operators
   namespace: operators
+  annotations:
+    addon.open-cluster-management.io/hosted-manifest-location: none
 ---
 apiVersion: operators.coreos.com/v1
 kind: OperatorGroup
 metadata:
   name: olm-operators
   namespace: olm
+  annotations:
+    addon.open-cluster-management.io/hosted-manifest-location: none
 spec:
   targetNamespaces:
     - olm
@@ -242,6 +284,8 @@ metadata:
   namespace: olm
   labels:
     olm.version: v0.23.1
+  annotations:
+    addon.open-cluster-management.io/hosted-manifest-location: none
 spec:
   displayName: Package Server
   description: Represents an Operator package that is available from a given CatalogSource which will resolve to a ClusterServiceVersion.
@@ -380,6 +424,8 @@ kind: CatalogSource
 metadata:
   name: operatorhubio-catalog
   namespace: olm
+  annotations:
+    addon.open-cluster-management.io/hosted-manifest-location: none
 spec:
   sourceType: grpc
   image: quay.io/operatorhubio/catalog:latest
