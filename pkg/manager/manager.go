@@ -28,6 +28,7 @@ import (
 
 	"open-cluster-management.io/addon-framework/pkg/addonfactory"
 	agentfw "open-cluster-management.io/addon-framework/pkg/agent"
+	"open-cluster-management.io/addon-framework/pkg/assets"
 	"open-cluster-management.io/addon-framework/pkg/utils"
 	addonapiv1alpha1 "open-cluster-management.io/api/addon/v1alpha1"
 	addonv1alpha1client "open-cluster-management.io/api/client/addon/clientset/versioned"
@@ -87,17 +88,8 @@ func (o *olmAgent) Manifests(cluster *clusterv1.ManagedCluster,
 	klog.V(1).InfoS("Cluster version", "cluster",
 		cluster.GetName(), "version", kubeVersion.String())
 
-	objects := []runtime.Object{}
-	// Keep the ordering defined in the file list and content
-	for _, file := range manifestFiles {
-		file = fmt.Sprintf("manifests/v%d.%d/%s", kubeVersion.Major(), kubeVersion.Minor(), file)
-		fileContent, err := loadManifestsFromFile(file, o.olmManifests)
-		if err != nil {
-			return nil, err
-		}
-		objects = append(objects, fileContent...)
-	}
 	// Get settings from AddOnDeploymentConfig
+	objects := []runtime.Object{}
 	config, err := addonfactory.GetAddOnDeploymentConfigValues(
 		addonfactory.NewAddOnDeloymentConfigGetter(o.addonClient),
 		addonfactory.ToAddOnDeloymentConfigValues)(cluster, addon)
@@ -111,8 +103,14 @@ func (o *olmAgent) Manifests(cluster *clusterv1.ManagedCluster,
 		return objects, nil
 	}
 	klog.V(6).InfoS("configuration", "config", config)
-	for _, obj := range objects {
-		setConfiguration(obj, config)
+	// Keep the ordering defined in the file list and content
+	for _, file := range manifestFiles {
+		file = fmt.Sprintf("manifests/v%d.%d/%s", kubeVersion.Major(), kubeVersion.Minor(), file)
+		fileContent, err := loadManifestsFromFile(file, o.olmManifests, config)
+		if err != nil {
+			return nil, err
+		}
+		objects = append(objects, fileContent...)
 	}
 	return objects, nil
 }
@@ -148,7 +146,7 @@ func clusterSupportsAddonInstall(cluster *clusterv1.ManagedCluster) bool {
 
 // loadManifestsFromFile read files containing manifest lists and returns
 // a matching slice of runtime objects.
-func loadManifestsFromFile(file string, manifests embed.FS) ([]runtime.Object, error) {
+func loadManifestsFromFile(file string, manifests embed.FS, config addonfactory.Values) ([]runtime.Object, error) {
 	objects := []runtime.Object{}
 	content, err := manifests.ReadFile(file)
 	if err != nil {
@@ -163,7 +161,7 @@ func loadManifestsFromFile(file string, manifests embed.FS) ([]runtime.Object, e
 		if err != nil {
 			return nil, err
 		}
-		chunk, err := toObjects(raw)
+		chunk, err := toObjects(raw, config)
 		if err != nil {
 			return nil, err
 		}
@@ -173,20 +171,22 @@ func loadManifestsFromFile(file string, manifests embed.FS) ([]runtime.Object, e
 }
 
 // toObjects takes raw yaml and returns a runtime object
-func toObjects(raw []byte) ([]runtime.Object, error) {
+func toObjects(raw []byte, config addonfactory.Values) ([]runtime.Object, error) {
 	fileAsString := string(raw[:])
-	sepYamlfiles := strings.Split(fileAsString, "---")
+	sepYamlfiles := strings.Split(fileAsString, "\n---")
 	results := make([]runtime.Object, 0, len(sepYamlfiles))
 	for _, f := range sepYamlfiles {
-		if f == "\n" || f == "" {
+		parsed := assets.MustCreateAssetFromTemplate("", []byte(f), config).Data
+		if string(parsed[:]) == "\n" || string(parsed[:]) == "" {
 			// ignore empty cases
 			continue
 		}
 		decode := scheme.Codecs.UniversalDeserializer().Decode
-		obj, _, err := decode(raw, nil, nil)
+		obj, _, err := decode(parsed, nil, nil)
 		if err != nil {
 			return nil, err
 		}
+		setConfiguration(obj, config)
 		results = append(results, obj)
 	}
 	return results, nil
