@@ -3,9 +3,11 @@ package manager
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"embed"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -16,9 +18,10 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/version"
-
 	"k8s.io/apimachinery/pkg/util/yaml"
+
 	"k8s.io/client-go/kubernetes/scheme"
+	restclient "k8s.io/client-go/rest"
 
 	"k8s.io/klog/v2"
 
@@ -27,6 +30,7 @@ import (
 	olmv1alpha2 "github.com/operator-framework/api/pkg/operators/v1alpha2"
 
 	"open-cluster-management.io/addon-framework/pkg/addonfactory"
+	"open-cluster-management.io/addon-framework/pkg/addonmanager"
 	agentfw "open-cluster-management.io/addon-framework/pkg/agent"
 	"open-cluster-management.io/addon-framework/pkg/assets"
 	"open-cluster-management.io/addon-framework/pkg/utils"
@@ -36,11 +40,44 @@ import (
 )
 
 const (
+	addonName       = "olm-addon"
 	OpenShiftVendor = "OpenShift"
 	defaultVersion  = "v1.25"
 )
 
+//go:embed manifests
+var FS embed.FS
+
 var manifestFiles = [4]string{"crds.yaml", "permissions.yaml", "olm.yaml", "cleanup.yaml"}
+
+func Start(kubeconfig *restclient.Config) {
+	klog.Info("starting ", addonName)
+	addonClient, err := addonv1alpha1client.NewForConfig(kubeconfig)
+	if err != nil {
+		klog.ErrorS(err, "unable to setup addon client")
+		os.Exit(1)
+	}
+	addonMgr, err := addonmanager.New(kubeconfig)
+	if err != nil {
+		klog.ErrorS(err, "unable to setup addon manager")
+		os.Exit(1)
+	}
+	olmAgent, err := NewOLMAgent(addonClient, addonName, FS)
+	if err != nil {
+		klog.ErrorS(err, "unable to create the olm agent")
+		os.Exit(1)
+	}
+	err = addonMgr.AddAgent(&olmAgent)
+	if err != nil {
+		klog.ErrorS(err, "unable to add addon agent to manager")
+		os.Exit(1)
+	}
+
+	ctx := context.Background()
+	go addonMgr.Start(ctx)
+
+	<-ctx.Done()
+}
 
 // olmAgent implements the AgentAddon interface and contains the addon configuration.
 type olmAgent struct {

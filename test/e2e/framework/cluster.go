@@ -16,10 +16,14 @@ import (
 	certificatesv1 "k8s.io/api/certificates/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/klog/v2"
 
 	ocmclientsetv1 "open-cluster-management.io/api/client/cluster/clientset/versioned/typed/cluster/v1"
 
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/clientcmd"
+
+	"open-cluster-management.io/olm-addon/pkg/manager"
 )
 
 type testCluster struct {
@@ -209,27 +213,20 @@ func deployOLMAddon(t *testing.T) {
 	cmd.Env = append(cmd.Env, fmt.Sprintf("KUBECONFIG=%s", TestCluster.kubeconfig))
 	output, err := cmd.CombinedOutput()
 	require.NoError(t, err, "failed deploying olm-addon manifests: %s", string(output))
-
-	dir, err := os.Getwd()
-	require.NoError(t, err, "failed retrieving the current directory")
-	managerBinary := path.Join(dir, "..", "..", "..", "bin", "olm-addon-controller")
-	commandLine = []string{managerBinary, "-v", "8"}
-	cmd = exec.Command(commandLine[0], commandLine[1:]...)
-	cmd.Env = append(cmd.Env, fmt.Sprintf("KUBECONFIG=%s", TestCluster.kubeconfig))
-	// open the out file for writing
-	logFile, err := os.Create(path.Join(TestCluster.testDir, "addon-manager.log"))
-	require.NoError(t, err, "failed creating addon-manager.log")
-	logFile.Write([]byte("Starting...\n"))
-	cmd.Stdout = logFile
-	cmd.Stderr = logFile
-	err = cmd.Start()
-	TestCluster.cleanFuncs = append(TestCluster.cleanFuncs, func() {
-		if err := cmd.Process.Kill(); err != nil {
-			t.Logf("failed to kill controller: %v", err)
+	go func() {
+		kubeconfigFile, err := os.ReadFile(TestCluster.kubeconfig)
+		if err != nil {
+			klog.ErrorS(err, "Unable to read the kubeconfig file")
+			os.Exit(1)
 		}
-	})
-	require.NoError(t, err, "failed to start olm-addon controller")
-	t.Logf("olm-addon running")
+		kubeconfig, err := clientcmd.RESTConfigFromKubeConfig(kubeconfigFile)
+		if err != nil {
+			klog.ErrorS(err, "Unable to create the restconfig")
+			os.Exit(1)
+		}
+		manager.Start(kubeconfig)
+	}()
+	t.Logf("olm-addon controller started")
 }
 
 // cleanup runs the functions for cleaning up in reverse order

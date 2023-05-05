@@ -23,7 +23,6 @@ RUN --mount=type=cache,target=/go/pkg/mod,z \
 # Copy the source
 COPY main.go .
 COPY pkg/ pkg/
-COPY manifests/ manifests/
 
 # Build
 # We don't vendor modules. Enforce that behavior
