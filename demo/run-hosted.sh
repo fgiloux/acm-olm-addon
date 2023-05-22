@@ -26,7 +26,7 @@ DEMO_COMMENT_COLOR=$GREEN
 export KUBECONFIG=${DEMO_DIR}/.demo/hub.kubeconfig
 
 kubectl-hub() {
-  kubectl --kubeconfig=${DEMO_DIR}/.demo/hub.kubeconfig $@
+  kubectl --kubeconfig=${DEMO_DIR}/.demo/hub.kubeconfig "$@"
 }
 
 kubectl-mgmt() {
@@ -48,7 +48,7 @@ c "OCM provides a central point for managing multi-clouds multi-scenarios Kubern
 pe "kubectl-hub get pods -A"
 pe "kubectl-mgmt get pods -A"
 pe "kubectl-s get pods -A"
-c "As you can see no ACM agent run on the managed cluster."
+c "As you can see no ACM agent runs on the managed cluster."
 
 c "Let's start with the OLM-addon installation."
 c "OLM-addon is based on the OCM extension mechanism (addon framework). It allows installation, configuration and update of OLM on managed clusters."
@@ -76,10 +76,11 @@ c "The selection of clusters where OLM gets installed is driven by a placement r
 c "Alternatively managedclusteraddons resources can be created manually."
 pe "kubectl-hub get placement -n open-cluster-management -o yaml"
 c "It only gets installed on clusters with the label olm=true."
-c "Let's annotate the managedclusteraddon resource to specify that we want the addon to be installed in hosted mode."
+c "Let's specify in the addondeploymentconfig and managedclusteraddon resources that we want the addon to be installed in hosted mode."
 # This step is unfortunate but it is not possible to specify that the managedclusteraddon resource is to be created with the annotation
 wait_command '[ $(KUBECONFIG=${DEMO_DIR}/.demo/hub.kubeconfig kubectl get managedclusteraddon -n spoke -o name | grep olm | wc -l) -gt 0 ]'
-pe "kubectl annotate managedclusteraddon -n spoke olm-addon \"addon.open-cluster-management.io/hosting-cluster-name\"=\"management\""
+pe "kubectl-hub patch addondeploymentconfig -n open-cluster-management olm-addon-default-config  --type='merge' -p '{\"spec\":{\"customizedVariables\": [{\"name\":\"InstallMode\",\"value\":\"Hosted\"}]}}'"
+pe "kubectl-hub annotate managedclusteraddon -n spoke olm-addon \"addon.open-cluster-management.io/hosting-cluster-name\"=\"management\""
 c "Let's check what we have on the management cluster."
 wait_command '[ $(KUBECONFIG=${DEMO_DIR}/.demo/management.kubeconfig kubectl get pods -n olm -o name | wc -l) -gt 1 ]'
 pe "kubectl-mgmt get pods -A -o wide"
@@ -89,41 +90,49 @@ pe "kubectl-s get pods -A -o wide"
 pe "kubectl-s get crds | grep coreos"
 c "The APIs have been created on the managed cluster but the controllers are running on the management cluster!"
 
-# credentials for the managed cluster API need to be made available to the olm components on the management cluster before the next steps can work
-skip() {
-
-c "OLM deployments can be configured globally, per cluster or set of clusters."
-pe "kubectl-hub get addondeploymentconfigs -n open-cluster-management -o yaml"
-c "Here we have node placement configured globally."
-
-c "Let's specify a different OLM image for the spoke cluster only to simulate a canary deployment."
-pe "cat <<EOF | kubectl-hub apply -f -
-apiVersion: addon.open-cluster-management.io/v1alpha1
-kind: AddOnDeploymentConfig
+c "Credentials for the managed cluster API need to be made available to the olm components on the management cluster"
+KUBECONFIG=${DEMO_DIR}/.demo/spoke.kubeconfig kubectl create -f - <<EOF
+apiVersion: v1
+kind: Secret
 metadata:
-  name: olm-release-0.24-0
-  namespace: default
-spec:
-# OLMImage
-# the same image is used for
-# - olm-operator
-# - catalog-operator
-# - packageserver
-# here it is the image for OLM release v0.24.0
-  customizedVariables:
-  - name: OLMImage
-    value: quay.io/operator-framework/olm@sha256:f9ea8cef95ac9b31021401d4863711a5eec904536b449724e0f00357548a31e7
+  name: olm-operator-secret
+  namespace: olm
+  annotations:
+    kubernetes.io/service-account.name: olm-operator-serviceaccount
+type: kubernetes.io/service-account-token
 EOF
-"
+spoke_api=$(KUBECONFIG=${DEMO_DIR}/.demo/spoke.kubeconfig kubectl config view -o jsonpath='{.clusters[].cluster.server}')
+ca=$(KUBECONFIG=${DEMO_DIR}/.demo/spoke.kubeconfig kubectl get secret olm-operator-secret -n olm -o jsonpath='{.data.ca\.crt}')
+token=$(KUBECONFIG=${DEMO_DIR}/.demo/spoke.kubeconfig kubectl get secret olm-operator-secret -n olm -o jsonpath='{.data.token}' | base64 --decode)
+namespace=olm
+echo "
+apiVersion: v1
+kind: Config
+clusters:
+- name: managed-cluster
+  cluster:
+    certificate-authority-data: $ca
+    server: $spoke_api
+contexts:
+- name: default-context
+  context:
+    cluster: managed-cluster
+    namespace: olm
+    user: olm-operator-serviceaccount
+current-context: default-context
+users:
+- name: olm-operator-serviceaccount
+  user:
+    token: $token
+" > ./demo/.demo/managed.kubeconfig
+pe "kubectl-mgmt -n olm create secret generic managed-cluster-kubeconfig --from-file=./demo/.demo/managed.kubeconfig"
 
-pe "kubectl-hub patch managedclusteraddon -n spoke olm-addon --type='merge' -p \"{\\\"spec\\\":{\\\"configs\\\":[{\\\"group\\\":\\\"addon.open-cluster-management.io\\\",\\\"resource\\\":\\\"addondeploymentconfigs\\\",\\\"name\\\":\\\"olm-release-0-24-0\\\",\\\"namespace\\\":\\\"default\\\"}]}}\""
+c "The current version of OLM knows about a single cluster. Here it is the managed cluster as we have passed its kubeconfig."
+c "This means that the artifacts created by OLM are on the managed cluster:"
+c "  - the ClusterServiceVersion, which triggers the deployment of the package server"
+c "  - the catalogs"
+pe "kubectl-s get pods -n olm"
 
-c "Let's check that the new image has been deployed on the spoke cluster."
-pe "kubectl-s get pods -A -o wide"
-
-# TODO: Add configuration of catalogs to the demo when ready
-
-c "Now it is becoming interesting :-)"
 c "Let's look at what we can do with OLM on the managed cluster."
 c "2 operational models are supported:"
 c "  - the managed cluster is handed over to an application team, that interacts directly with it"
@@ -207,10 +216,6 @@ pe "kubectl-hub patch Placement -n open-cluster-management non-openshift --type=
 pe "kubectl-hub get placements -A"
 wait_command '[ $(KUBECONFIG=${DEMO_DIR}/.demo/spoke.kubeconfig kubectl get pods -n olm -o name | wc -l) -lt 2 ]'
 pe "kubectl-s get pods -n olm"
-
-
-# skip end
-}
 
 c "That's it! Thank you for watching."
 
