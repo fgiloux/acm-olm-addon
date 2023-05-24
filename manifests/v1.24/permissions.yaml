@@ -6,8 +6,8 @@ metadata:
   labels:
     rbac.authorization.k8s.io/aggregate-to-admin: "true"
 rules:
-- apiGroups: ["operators.coreos.com"]
-  resources: ["operatorgroups", "subscriptions", "clusterserviceversions", "catalogsources", "installplans", "olmconfigs"]
+- apiGroups: ["cert-manager.io"]
+  resources: ["certificates", "clusterissuers", "issuers"]
   verbs: ["get", "list", "create", "update", "patch", "delete"]
 ---
 # Allow the Klusterlet to create resources using the newly provisioned API

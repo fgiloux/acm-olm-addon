@@ -33,14 +33,11 @@ kubectl-s1() {
   kubectl --kubeconfig=${DEMO_DIR}/.demo/spoke1.kubeconfig "$@"
 }
 
-kubectl-s2() {
-  kubectl --kubeconfig=${DEMO_DIR}/.demo/spoke2.kubeconfig $@
-}
 
 c "Hi, glad that you are looking at the OLM everywhere demo!"
 c "Operator Lifecycle Management (OLM) is handy for installing and managing operators from curated catalogs."
 c "It comes pre-installed with OpenShift but works well with other Kubernetes distributions too.\n"
-c "For this demo we have 3 kind clusters: one management and two managed ones."
+c "For this demo we have 2 kind clusters: one for management and a managed one."
 pe "kind get clusters"
 
 c "Open Cluster Management (OCM) components are running on these clusters."
@@ -50,31 +47,22 @@ pe "kubectl-hub get pods -A"
 c "Let's start with the OLM-addon installation."
 c "OLM-addon is based on the OCM extension mechanism (addon framework). It allows installation, configuration and update of OLM on managed clusters."
 pushd ${DEMO_DIR}/.. &>/dev/null
+# kubectl-hub label managedcluster spoke1 vendor=kind &> /dev/null
 pe "make deploy"
 popd &>/dev/null
 
 # c "We can now specify that OLM is to be deployed on our clusters. This can also be done once using OCM Placement API."
-# pe "cat <<EOF | kubectl-hub apply -f -
-# apiVersion: addon.open-cluster-management.io/v1alpha1
-# kind: ManagedClusterAddOn
-# metadata:
-#  name: olm-addon
-#  namespace: spoke1
-# spec:
-#  installNamespace: open-cluster-management-agent-addon
-# EOF
-# "
-
-# pe "cat <<EOF | kubectl-hub apply -f -
-# apiVersion: addon.open-cluster-management.io/v1alpha1
-# kind: ManagedClusterAddOn
-# metadata:
-#  name: olm-addon
-#  namespace: spoke2
-# spec:
-#  installNamespace: open-cluster-management-agent-addon
-# EOF
-# "
+# c "This should not be needed and covered by the placement rule"
+pe "cat <<EOF | kubectl-hub apply -f -
+apiVersion: addon.open-cluster-management.io/v1alpha1
+kind: ManagedClusterAddOn
+metadata:
+  name: olm-addon
+  namespace: spoke1
+spec:
+  installNamespace: open-cluster-management-agent-addon
+EOF
+"
 
 c "OLM is now getting automatically installed on the spoke clusters."
 wait_command '[ $(KUBECONFIG=${DEMO_DIR}/.demo/hub.kubeconfig kubectl get managedclusteraddon -A 2>/dev/null | wc -l) -gt 1 ]'
@@ -86,43 +74,36 @@ c "It only gets installed on clusters with the vendor label set to something els
 c "This check is additionally built in the addon implementation."
 
 c "Let's check what we have on the spoke clusters."
-wait_command '[ $(KUBECONFIG=${DEMO_DIR}/.demo/spoke1.kubeconfig kubectl get pods -n olm -o name | wc -l) -gt 3 ]'
+wait_command '[ $(KUBECONFIG=${DEMO_DIR}/.demo/spoke1.kubeconfig kubectl get pods -n rukpak-system -o name | wc -l) -gt 2 ]'
 pe "kubectl-s1 get pods -A -o wide"
-pe "kubectl-s2 get pods -A -o wide"
-
-# speeding up reconciliation
-# ctrler="$(kubectl-hub get pods -n open-cluster-management -o name | grep olm)"
-# kubectl-hub delete -n open-cluster-management ${ctrler} &> /dev/null
 
 c "OLM deployments can be configured globally, per cluster or set of clusters."
 pe "kubectl-hub get addondeploymentconfigs -n open-cluster-management -o yaml"
 c "Here we have node placement configured globally."
 
-c "Let's specify a different OLM image for the spoke1 cluster only to simulate a canary deployment."
-pe "cat <<EOF | kubectl-hub apply -f -
-apiVersion: addon.open-cluster-management.io/v1alpha1
-kind: AddOnDeploymentConfig
-metadata:
-  name: olm-release-0.24-0
-  namespace: default
-spec:
-# OLMImage
-# the same image is used for
-# - olm-operator
-# - catalog-operator
-# - packageserver
-# here it is the image for OLM release v0.24.0
-  customizedVariables:
-  - name: OLMImage
-    value: quay.io/operator-framework/olm@sha256:f9ea8cef95ac9b31021401d4863711a5eec904536b449724e0f00357548a31e7
-EOF
-"
+# c "Let's specify a different OLM image for the spoke1 cluster only to simulate a canary deployment."
+# pe "cat <<EOF | kubectl-hub apply -f -
+# apiVersion: addon.open-cluster-management.io/v1alpha1
+# kind: AddOnDeploymentConfig
+# metadata:
+#   name: olm-release-0.24-0
+#   namespace: default
+# spec:
+# # OLMImage
+# # the same image is used for
+# # - olm-operator
+# # - catalog-operator
+# # - packageserver
+# # here it is the image for OLM release v0.24.0
+#   customizedVariables:
+#   - name: OLMImage
+#     value: quay.io/operator-framework/olm@sha256:f9ea8cef95ac9b31021401d4863711a5eec904536b449724e0f00357548a31e7
+# EOF
 
-pe "kubectl-hub patch managedclusteraddon -n spoke1 olm-addon --type='merge' -p \"{\\\"spec\\\":{\\\"configs\\\":[{\\\"group\\\":\\\"addon.open-cluster-management.io\\\",\\\"resource\\\":\\\"addondeploymentconfigs\\\",\\\"name\\\":\\\"olm-release-0-24-0\\\",\\\"namespace\\\":\\\"default\\\"}]}}\""
+# pe "kubectl-hub patch managedclusteraddon -n spoke1 olm-addon --type='merge' -p \"{\\\"spec\\\":{\\\"configs\\\":[{\\\"group\\\":\\\"addon.open-cluster-management.io\\\",\\\"resource\\\":\\\"addondeploymentconfigs\\\",\\\"name\\\":\\\"olm-release-0-24-0\\\",\\\"namespace\\\":\\\"default\\\"}]}}\""
 
-c "Let's check that the new image has been deployed on spoke1 and not spoke2."
-pe "kubectl-s1 get pods -A -o wide"
-pe "kubectl-s2 get pods -A -o wide"
+# c "Let's check that the new image has been deployed."
+# pe "kubectl-s1 get pods -A -o wide"
 
 # TODO: Add configuration of catalogs to the demo when ready
 
@@ -132,84 +113,50 @@ c "2 operational models are supported:"
 c "  - the managed cluster is handed over to an application team, that interacts directly with it"
 c "  - the installation of operators and the management of their lifecycle stays centralized\n"
 
-c "Let's look at OLM catalogs and what they provide"
-pe "kubectl-s1 get catalogsources -n olm"
-c "The default catalog is for community operators available on operatorhub.io."
-c "Users are free to prevent the installation of this catalog and to have their own curated catalog instead."
-c "The content of catalogs is simply stored as container images in a standard registry, which can be on- or offline." 
-
-c "Here are the operators of this catalog."
-pe "kubectl-s1 get packagemanifests | more"
-c "That's quite a few of them"
-
-c "Let's pick one of them and install it by creating a subscription directly on the managed cluster."
-c "Alternatively a policy could get defined on the hub to create subscriptions on the matching managed clusters."
+c "Let's create a BundleDeployment and install an operator."
+c "Alternatively a policy could get defined on the hub to create the same."
 pe "cat <<EOF | kubectl-s1 apply -f -
-apiVersion: operators.coreos.com/v1alpha1
-kind: Subscription
+apiVersion: core.rukpak.io/v1alpha1
+kind: BundleDeployment
 metadata:
-  name: my-postgresql
-  namespace: operators
+  name: combo
 spec:
-  channel: v5
-  name: postgresql
-  source: operatorhubio-catalog
-  sourceNamespace: olm
-  # OLM can automatically update the operator to the latest and greatest version available
-  # or the user may decide to manually approve updates and possibly pin the operator
-  # to a validated and trusted version like here.
-  installPlanApproval: Manual
-  startingCSV: postgresoperator.v5.2.0
+  provisionerClassName: core-rukpak-io-plain
+  template:
+    metadata:
+      labels:
+        app: combo
+    spec:
+      provisionerClassName: core-rukpak-io-plain
+      source:
+        image:
+          ref: quay.io/operator-framework/combo-bundle:v0.0.1
+        type: image
 EOF
 "
 
-c "Let's approve the installation."
-installplan=$(kubectl-s1 get installplans -n operators -o name)
-pe "kubectl-s1 patch ${installplan} -n operators --type='merge' -p \"{\\\"spec\\\":{\\\"approved\\\":true}}\""
-c "And check that the operator is getting installed."
-wait_command '[ $(KUBECONFIG=${DEMO_DIR}/.demo/spoke1.kubeconfig kubectl get pods -n operators -o name | wc -l) -eq 1 ]'
-pe "kubectl-s1 get pods -n operators"
-pe "kubectl-s1 get crds | grep postgres"
+c "Checking that the operator is getting installed."
+# wait_command '[ $(KUBECONFIG=${DEMO_DIR}/.demo/spoke1.kubeconfig kubectl get pods -n operators -o name | wc -l) -eq 1 ]'
+pe "kubectl-s1 get pods -A"
+pe "kubectl-s1 get crds"
 
 c "The installed version of the operator is on purpose not the latest."
-c "Let's look at the installplans."
-pe "kubectl-s1 get installplans -n operators"
-c "Besides the installplan we have just approved there is one for a newer version."
-c "This matches the latest version in the channel we have subscribed to."
-c "We have it here right away as we purposefully installed an older version."
-c "This would however automatically pops up when the operator authors publish a new version to the channel the subscription is for."
-c "Updating the operator is as simple as approving the new installplan."
-
-installplans=$(kubectl-s1 get installplans -n operators -o=jsonpath='{range .items[*]}{@.metadata.name}{" "}{@.spec.approved}{"\n"}{end}')
-while IFS= read -r line; do
-  array=($line)
-  if [ "${array[1]}" = "false" ];
-  then
-    installplan="${array[0]}"
-  fi
-done <<< "$installplans"
-pe "kubectl-s1 patch installplans ${installplan} -n operators --type='merge' -p \"{\\\"spec\\\":{\\\"approved\\\":true}}\""
+pe "kubectl-s1 patch  bundledeployment combo --type='merge' -p \"{\\\"spec\\\":{\\\"template\\\":{\\\"spec\\\":{\\\"source\\\":{\\\"image\\\":{\\\"ref\\\":\\\"quay.io/operator-framework/combo-bundle:v0.0.2\\\"}}}}}}\""
 c "Let's check that the operator is getting updated."
-pe "kubectl-s1 get csv -n operators"
-pe "kubectl-s1 get pods -n operators"
+pe "kubectl-s1 get pods -A"
 
-c "Let's uninstall the operator by deleting the subscription and the clusterserviceversion."
-wait_command '[ $(KUBECONFIG=${DEMO_DIR}/.demo/spoke1.kubeconfig kubectl get csv -n operators -o name | wc -l) -eq 1 ]'
-
-csv=$(kubectl-s1 get csv -n operators -o name)
-sub=$(kubectl-s1 get subscription -n operators -o name)
-pe "kubectl-s1 delete $sub -n operators"
-pe "kubectl-s1 delete $csv -n operators"
-c "And check that the operator is deleted."
-pe "kubectl-s1 get pods -n operators"
+c "Let's uninstall the operator by deleting the BundleDeplyoment."
+pe "kubectl-s1 delete bundledeployment combo"
+c "And check that the operator is getting deleted."
+pe "kubectl-s1 get pods -A"
 
 c "Finally OLM can get removed by deleting the managedclusteraddon on the hub if it was manually created."
 c "Here we will just patch the placement so that our spoke clusters are not covered by the rule anymore."
 # pe "kubectl-hub delete managedclusteraddons.addon.open-cluster-management.io -n spoke1 olm-addon"
 pe "kubectl-hub patch Placement -n open-cluster-management non-openshift --type='merge' -p  \"{\\\"spec\\\":{\\\"predicates\\\":[{\\\"requiredClusterSelector\\\":{\\\"labelSelector\\\":{\\\"matchLabels\\\":{\\\"demo\\\":\\\"finished\\\"}}}}]}}\""
 pe "kubectl-hub get placements -A"
-wait_command '[ $(KUBECONFIG=${DEMO_DIR}/.demo/spoke1.kubeconfig kubectl get pods -n olm -o name | wc -l) -lt 2 ]'
-pe "kubectl-s1 get pods -n olm"
+# wait_command '[ $(KUBECONFIG=${DEMO_DIR}/.demo/spoke1.kubeconfig kubectl get pods -n  -o name | wc -l) -lt 2 ]'
+pe "kubectl-s1 get pods -n rukpak-system"
 
 c "That's it! Thank you for watching."
 

@@ -22,9 +22,9 @@ import (
 
 	"k8s.io/klog/v2"
 
-	olmv1 "github.com/operator-framework/api/pkg/operators/v1"
-	olmv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
-	olmv1alpha2 "github.com/operator-framework/api/pkg/operators/v1alpha2"
+	rukpakv1alpha1 "github.com/operator-framework/rukpak/api/v1alpha1"
+
+	cmapiv1 "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
 
 	"open-cluster-management.io/addon-framework/pkg/addonfactory"
 	agentfw "open-cluster-management.io/addon-framework/pkg/agent"
@@ -39,7 +39,7 @@ const (
 	defaultVersion  = "v1.25"
 )
 
-var manifestFiles = [4]string{"crds.yaml", "permissions.yaml", "olm.yaml", "cleanup.yaml"}
+var manifestFiles = [3]string{"cert-manager.yaml", "rukpak.yaml", "permissions.yaml"}
 
 // olmAgent implements the AgentAddon interface and contains the addon configuration.
 type olmAgent struct {
@@ -50,13 +50,10 @@ type olmAgent struct {
 
 // NewOLMAgent instantiates a new olmAgent, which implements the AgentAddon interface and contains the addon configuration.
 func NewOLMAgent(addonClient addonv1alpha1client.Interface, addonName string, olmManifests embed.FS) (olmAgent, error) {
-	if err := olmv1alpha1.AddToScheme(scheme.Scheme); err != nil {
+	if err := rukpakv1alpha1.AddToScheme(scheme.Scheme); err != nil {
 		return olmAgent{}, err
 	}
-	if err := olmv1alpha2.AddToScheme(scheme.Scheme); err != nil {
-		return olmAgent{}, err
-	}
-	if err := olmv1.AddToScheme(scheme.Scheme); err != nil {
+	if err := cmapiv1.AddToScheme(scheme.Scheme); err != nil {
 		return olmAgent{}, err
 	}
 	return olmAgent{
@@ -125,8 +122,8 @@ func (o *olmAgent) GetAgentAddonOptions() agentfw.AgentAddonOptions {
 		// TODO: an agent would be required to surface more fine grained information
 		HealthProber: utils.NewDeploymentProber(
 			types.NamespacedName{
-				Name:      "olm-operator",
-				Namespace: "olm",
+				Name:      "core",
+				Namespace: "rukpak-system",
 			},
 		),
 		SupportedConfigGVRs: []schema.GroupVersionResource{
@@ -208,24 +205,5 @@ func setConfiguration(obj runtime.Object, config addonfactory.Values) {
 			}
 		}
 		return
-	}
-	if csv, ok := obj.(*olmv1alpha1.ClusterServiceVersion); ok {
-		if nodeSelector, ok := config["NodeSelector"]; ok {
-			for i := range csv.Spec.InstallStrategy.StrategySpec.DeploymentSpecs {
-				csv.Spec.InstallStrategy.StrategySpec.DeploymentSpecs[i].Spec.Template.Spec.NodeSelector = nodeSelector.(map[string]string)
-			}
-		}
-		if tolerations, ok := config["Tolerations"]; ok {
-			for i := range csv.Spec.InstallStrategy.StrategySpec.DeploymentSpecs {
-				csv.Spec.InstallStrategy.StrategySpec.DeploymentSpecs[i].Spec.Template.Spec.Tolerations = tolerations.([]corev1.Toleration)
-			}
-		}
-		if img, ok := config["OLMImage"]; ok {
-			for i := range csv.Spec.InstallStrategy.StrategySpec.DeploymentSpecs {
-				for j := range csv.Spec.InstallStrategy.StrategySpec.DeploymentSpecs[i].Spec.Template.Spec.Containers {
-					csv.Spec.InstallStrategy.StrategySpec.DeploymentSpecs[i].Spec.Template.Spec.Containers[j].Image = img.(string)
-				}
-			}
-		}
 	}
 }
